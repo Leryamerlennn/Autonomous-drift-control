@@ -10,7 +10,7 @@ Referenced [code base](https://github.com/kanakkabara/Autonomous-Drifting)
 
 ## 1 ‒ Deliverables
 
-- **On‑car data logger** (ROS 2 node + HDF5 export) operating at 60 Hz.
+- **On‑car data logger** operating at 60 Hz.
 - **System‑ID toolkit** to estimate μ, m, Izz, Cf, Cr from scripted sweeps.
 - **PILCO controller** that reaches 𝐷ₘ ≥ 0.9 in ≤150 rollouts.
 - **Domain‑Randomisation** routine applied directly to stored rollouts for robustness.

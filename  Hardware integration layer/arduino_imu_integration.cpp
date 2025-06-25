@@ -3,7 +3,8 @@
 #include "Wire.h"
 #include "I2C.h"
 
-#define MPU9250_IMU_ADDRESS 0x68
+//#define MPU9250_IMU_ADDRESS 0x68
+#define MPU9250_IMU_ADDRESS 0x69
 #define MPU9250_MAG_ADDRESS 0x0C
  
 #define GYRO_FULL_SCALE_250_DPS  0x00
@@ -16,7 +17,7 @@
 #define ACC_FULL_SCALE_8G  0x10
 #define ACC_FULL_SCALE_16G 0x18
  
-#define INTERVAL_MS_PRINT 10
+#define INTERVAL_MS_PRINT 1
  
 #define G 9.80665
 
@@ -27,8 +28,8 @@ class KalmanFilter2D {
 private:
     float x[2] = {0, 0};  
     float P[2][2] = {{1, 0}, {0, 1}};  
-    float Q[2] = {0.001, 0.001};  
-    float R = 0.1;              
+    float Q[2] = {0.001, 0.001};  // Шум процесса (настраивается)
+    float R = 0.1;              // Шум измерения (настраивается)
 
 public:
     float update(float measurement, float gyroRate, float dt) {
@@ -97,7 +98,7 @@ void updateAlpha(float targetAlpha, float speed = 0.1) {
 }
 
 bool isHardDrift(float gyroZ, float accelY) {
-    return (abs(gyroZ) > 200) || (abs(accelY) > 3.0); 
+    return (abs(gyroZ) > 200) || (abs(accelY) > 3.0); // Пороги для гоночного авто
 }
 
 float filteredAccelX = 0;
@@ -144,76 +145,78 @@ void setup() {
   I2CwriteByte(MPU9250_IMU_ADDRESS, 56, 0x01); // Enable interrupt pin for raw data
 }
 
-void loop() {
 
-  // ===== Processing Car =====
-  // await stabilization signal from receiver
+void loop() {
+  static String serialBuffer = "";
+  static bool gotSerialSteer = false;
+  static unsigned long lastSerialTime = 0;
+
+  // ---------- read serial ----------
+
+  String s = Serial.readString();
+  int value = s.toInt();
+  lastGoodServo = value;
+  gotSerialSteer = true;
+  lastSerialTime = millis();
+
+
+  // ===== СТАНДАРТНАЯ ИНИЦИАЛИЗАЦИЯ =====
   if (!readyToDrive) {
     if (millis() - readyStart > 1000) {
       readyToDrive = true;
     } else {
-      //setOcr1B(3000); 
       return;
     }
   }
 
-  unsigned long pwmValueSOS = pulseIn(2, HIGH);
+  // ===== ЧТЕНИЕ PWM =====
+  unsigned long pwmValueSOS   = pulseIn(2, HIGH);
   unsigned long pwmValueServo = pulseIn(3, HIGH);
   unsigned long pwmValueMotor = pulseIn(4, HIGH);
-  unsigned long pwmValueAuto = pulseIn(5, HIGH);
+  unsigned long pwmValueAuto  = pulseIn(5, HIGH);
 
-  // Filtered last value and remember it
-  if (pwmValueServo >= 900 && pwmValueServo <= 2100) {
-    lastGoodServo = pwmValueServo * 2;
-    
-  }
+  // // ===== ЕСЛИ НЕТ СЕРИАЛА >100 мс — ИСПОЛЬЗУЕМ RC =====
+  // if ((millis() - lastSerialTime) > 100) {
+  //   gotSerialSteer = false;
+  // }
 
-  
 
+
+  // ===== ПОДАЕМ УПРАВЛЕНИЕ НА МОТОР И РУЛЬ =====
   if (pwmValueSOS >= 1459) {
-    setOcr1A(700);
-  } else if (pwmValueSOS <= 1000 && pwmValueAuto <= 1000) {
-    setOcr1B(lastGoodServo);
-    setOcr1A(pwmValueMotor * 2);
+    setOcr1A(700);  // тормоз
+  } else {
+    setOcr1B(lastGoodServo);            
+    setOcr1A(pwmValueMotor * 2);    
   }
 
-  // ===== Proccesing IMU =====
+  // ===== processing IMU =====
   unsigned long currentMillis = millis();
 
   if (!readSample()) return;
- 
+
   if (currentMillis - lastPrintMillis > INTERVAL_MS_PRINT) {
     angle accAngles = calculateAccelerometerAngles();
-
     float accPitch = degrees(accAngles.x);
-    float accRoll = degrees(accAngles.y);
+    float accRoll  = degrees(accAngles.y);
 
-    float errorPitch = kalmanAngles.x - accPitch;
-    float errorRoll  = kalmanAngles.y - accRoll;
-
-  
-
+    // ===== ОТПРАВКА В SERIAL ДЛЯ RASPBERRY =====
     Serial.print(currentMillis); Serial.print(",");
     Serial.print(filteredAccelX, 4); Serial.print(",");
     Serial.print(filteredAccelY, 4); Serial.print(",");
     Serial.print(normalized.gyroscope.z, 4); Serial.print(",");
-    Serial.print(lastGoodServo);Serial.print(",");
+    Serial.print(lastGoodServo); 
     Serial.println();
-    
-    
-    
 
     lastPrintMillis = currentMillis;
   }
 
+  // ===== АДАПТИВНЫЙ ФИЛЬТР =====
   if (isHardDrift(normalized.gyroscope.z, normalized.accelerometer.y)) {
-    updateAlpha(0.99); // Переход к гироскопу
+    updateAlpha(0.99); // упор на гироскоп
   } else {
-    updateAlpha(0.9);  // Возврат к балансу
+    updateAlpha(0.9);  // баланс с акселерометром
   }
-
-
-
 }
 
 

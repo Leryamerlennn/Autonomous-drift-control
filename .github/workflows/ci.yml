@@ -1,0 +1,30 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main  # Запускать при push в ветку main
+  pull_request:
+    branches:
+      - main  # Запускать при pull request в ветку main
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest  # Использовать последнюю версию Ubuntu
+
+    steps:
+    - name: Checkout Code
+      uses: actions/checkout@v2  # Клонируем репозиторий
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'  # Установим Python версии 3.8
+
+    - name: Install Dependencies
+      run: |
+        pip install -r requirements.txt  # Устанавливаем зависимости из requirements.txt
+
+    - name: Run Pylint
+      run: |
+        pylint **/*.py  # Запуск линтера на всех файлах Python в проекте

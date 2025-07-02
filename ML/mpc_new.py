@@ -5,8 +5,11 @@ Real-time controller: two drift laps → recovery
 • FSM: DRIFT_LOOP (lap counter)  →  RECOVERY (MPC)  →  IDLE
 """
 
-import numpy as np, torch, serial, time, argparse, json
-from pathlib import Path
+import numpy as np
+import torch
+import serial
+import time
+
 
 class DynNet(torch.nn.Module):
     def __init__(self):
@@ -25,11 +28,12 @@ class DynNet(torch.nn.Module):
         x = self.fc3(x)
         return x
 
+
 # Функция для исправления ключей
-def fix_state_dict_keys(state_dict):
+def fix_state_dict_keys(sd):
     # Преобразуем ключи, например "0.weight" -> "fc1.weight"
     fixed_state_dict = {}
-    for k, v in state_dict.items():
+    for k, v in sd.items():
         if k.startswith("net.0."):
             new_key = k.replace("net.0.", "fc1.")
         elif k.startswith("net.2."):
@@ -43,14 +47,14 @@ def fix_state_dict_keys(state_dict):
 
 
 # ────────────────────────────────── 1. CONFIG ──────────────────────────────────
-PORT        = "COM7"          # ← Windows example, use /dev/ttyUSB0 on Linux
-BAUD        = 115200
+PORT = "COM7"          # ← Windows example, use /dev/ttyUSB0 on Linux
+BAUD = 115200
 TARGET_LAPS = 2
-YAW_SP      = 280.0           # °/s in drift
-PID_KP      = 0.004           # rough: ΔPWM = KP·(SP-yawRate)
+YAW_SP = 280.0           # °/s in drift
+PID_KP = 0.004           # rough: ΔPWM = KP·(SP-yawRate)
 STEER_MIN, STEER_MAX = 1968, 4004
-GAS_MIN,   GAS_MAX   = 1968, 4004
-GAS_DURING_DRIFT     = 3800   # constant gas while circling
+GAS_MIN,   GAS_MAX = 1968, 4004
+GAS_DURING_DRIFT = 3800   # constant gas while circling
 # MPC
 H, K, SIG = 12, 150, 0.30
 
@@ -66,16 +70,24 @@ state_dict = fix_state_dict_keys(state_dict)
 model = DynNet()
 model.load_state_dict(state_dict)
 
-mu_s,  sig_s  = checkpoint["mu_s"],  checkpoint["sig_s"]
-mu_a,  sig_a  = checkpoint["mu_a"],  checkpoint["sig_a"]
+mu_s, sig_s = checkpoint["mu_s"], checkpoint["sig_s"]
+mu_a,  sig_a = checkpoint["mu_a"],  checkpoint["sig_a"]
 mu_sn, sig_sn = checkpoint["mu_sn"], checkpoint["sig_sn"]
-def norm(x, m, s):  return (x-m)/s
-def denorm(x, m, s):return x*s+m
+
+
+def norm(x, m, s):
+    return (x-m)/s
+
+
+def denorm(x, m, s):
+    return x*s+m
+
 
 STEER_C = (STEER_MIN+STEER_MAX)/2
-STEER_SP= (STEER_MAX-STEER_MIN)/2
-GAS_C   = (GAS_MIN+GAS_MAX)/2
-GAS_SP  = (GAS_MAX-GAS_MIN)/2
+STEER_SP = (STEER_MAX-STEER_MIN)/2
+GAS_C = (GAS_MIN+GAS_MAX)/2
+GAS_SP = (GAS_MAX-GAS_MIN)/2
+
 
 # ────────────────────────────────── 3. HELPERS ─────────────────────────────────
 def mpc_control(s_now):
@@ -86,14 +98,15 @@ def mpc_control(s_now):
         cost, s = 0.0, s0.clone()
         for a in a_seq:
             a_n = torch.tensor(norm(a, mu_a, sig_a), dtype=torch.float32)
-            s   = net(torch.cat([s, a_n]))
+            s = model(torch.cat([s, a_n]))
             yaw, ay, beta, _ = denorm(s, mu_sn, sig_sn)
             cost += yaw*yaw + 0.5*ay*ay + 0.2*beta*beta
         if cost < best_cost:
             best_cost, best = a_seq[0]
     steer_pwm = int(np.clip(best[0]*STEER_SP + STEER_C, STEER_MIN, STEER_MAX))
-    gas_pwm   = int(np.clip(best[1]*GAS_SP   + GAS_C,   GAS_MIN,   GAS_MAX))
+    gas_pwm = int(np.clip(best[1]*GAS_SP + GAS_C,   GAS_MIN,   GAS_MAX))
     return steer_pwm, gas_pwm
+
 
 # ────────────────────────────────── 4. FSM LOOP ────────────────────────────────
 DRIFT, RECOVERY, IDLE = range(3)

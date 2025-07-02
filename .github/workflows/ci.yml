@@ -28,3 +28,8 @@ jobs:
     - name: Run Pylint
       run: |
         pylint **/*.py  # Запуск линтера на всех файлах Python в проекте
+
+    - name: Run Ml model Tests
+      run: |
+        pip install pytest
+        pytest test_model.py

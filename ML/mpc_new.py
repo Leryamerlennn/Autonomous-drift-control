@@ -3,9 +3,10 @@ import numpy as np
 import torch
 import serial
 
+
 class DynNet(torch.nn.Module):
     def __init__(self):
-        super(DynNet, self).__init__()
+        super().__init__()
         self.fc1 = torch.nn.Linear(6, 128)
         self.relu1 = torch.nn.ReLU()
         self.fc2 = torch.nn.Linear(128, 128)
@@ -71,8 +72,8 @@ GAS_C = (GAS_MIN + GAS_MAX) / 2
 GAS_SP = (GAS_MAX - GAS_MIN) / 2
 
 
-def mpc_control(state_now):
-    s0 = torch.tensor(norm(state_now, mu_s, sig_s), dtype=torch.float32)
+def mpc_control(sn):
+    s0 = torch.tensor(norm(sn, mu_s, sig_s), dtype=torch.float32)
     best, best_cost = (0, 0), 1e9
     for _ in range(K):
         a_seq = np.random.normal(0, SIG, size=(H, 2))
@@ -80,13 +81,13 @@ def mpc_control(state_now):
         for a in a_seq:
             a_n = torch.tensor(norm(a, mu_a, sig_a), dtype=torch.float32)
             s = model(torch.cat([s, a_n]))
-            yaw, ay, beta, _ = denorm(s, mu_sn, sig_sn)
-            cost += yaw * yaw + 0.5 * ay * ay + 0.2 * beta * beta
+            yaw, a_y, beta, _ = denorm(s, mu_sn, sig_sn)
+            cost += yaw * yaw + 0.5 * a_y * a_y + 0.2 * beta * beta
         if cost < best_cost:
             best_cost, best = a_seq[0]
-    steer_pwm = int(np.clip(best[0] * STEER_SP + STEER_C, STEER_MIN, STEER_MAX))
-    gas_pwm = int(np.clip(best[1] * GAS_SP + GAS_C, GAS_MIN, GAS_MAX))
-    return steer_pwm, gas_pwm
+    spwm = int(np.clip(best[0] * STEER_SP + STEER_C, STEER_MIN, STEER_MAX))
+    gpwm = int(np.clip(best[1] * GAS_SP + GAS_C, GAS_MIN, GAS_MAX))
+    return spwm, gpwm
 
 
 DRIFT, RECOVERY, IDLE = range(3)
@@ -104,7 +105,7 @@ with serial.Serial(PORT, BAUD, timeout=0.03) as ser:
         state_now = np.array([yawRate, ay_w, 0.0, 0.0, 0.0, 0.0])
 
         curr_yaw = prev_yaw + yawRate * 0.02
-        if prev_yaw < 0 and curr_yaw >= 0:
+        if prev_yaw < 0 <= curr_yaw:
             laps += 1
             print(f"Lap {laps}\n")
         prev_yaw = curr_yaw

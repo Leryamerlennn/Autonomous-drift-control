@@ -3,3 +3,5 @@ matplotlib
 scipy
 torch
 pylint
+pytest
+torch

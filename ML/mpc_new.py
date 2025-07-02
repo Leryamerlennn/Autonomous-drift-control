@@ -8,6 +8,40 @@ Real-time controller: two drift laps → recovery
 import numpy as np, torch, serial, time, argparse, json
 from pathlib import Path
 
+class DynNet(torch.nn.Module):
+    def __init__(self):
+        super(DynNet, self).__init__()
+        self.fc1 = torch.nn.Linear(6, 128)
+        self.relu1 = torch.nn.ReLU()
+        self.fc2 = torch.nn.Linear(128, 128)
+        self.relu2 = torch.nn.ReLU()
+        self.fc3 = torch.nn.Linear(128, 4)
+
+    def forward(self, x):
+        x = self.fc1(x)
+        x = self.relu1(x)
+        x = self.fc2(x)
+        x = self.relu2(x)
+        x = self.fc3(x)
+        return x
+
+# Функция для исправления ключей
+def fix_state_dict_keys(state_dict):
+    # Преобразуем ключи, например "0.weight" -> "fc1.weight"
+    fixed_state_dict = {}
+    for k, v in state_dict.items():
+        if k.startswith("net.0."):
+            new_key = k.replace("net.0.", "fc1.")
+        elif k.startswith("net.2."):
+            new_key = k.replace("net.2.", "fc2.")
+        elif k.startswith("net.4."):
+            new_key = k.replace("net.4.", "fc3.")
+        else:
+            new_key = k
+        fixed_state_dict[new_key] = v
+    return fixed_state_dict
+
+
 # ────────────────────────────────── 1. CONFIG ──────────────────────────────────
 PORT        = "COM7"          # ← Windows example, use /dev/ttyUSB0 on Linux
 BAUD        = 115200
@@ -21,16 +55,20 @@ GAS_DURING_DRIFT     = 3800   # constant gas while circling
 H, K, SIG = 12, 150, 0.30
 
 # ────────────────────────────────── 2. LOAD MODEL ──────────────────────────────
-ckpt = torch.load("dyn_v3.pt", map_location="cpu", weights_only=False)
-net  = torch.nn.Sequential(
-        torch.nn.Linear(6,128), torch.nn.ReLU(),
-        torch.nn.Linear(128,128), torch.nn.ReLU(),
-        torch.nn.Linear(128,4)).eval()
-net.load_state_dict(ckpt["net"])
+# Загрузка состояния модели
+checkpoint = torch.load('ML/dyn_v3.pt', map_location='cpu', weights_only=False)
 
-mu_s,  sig_s  = ckpt["mu_s"],  ckpt["sig_s"]
-mu_a,  sig_a  = ckpt["mu_a"],  ckpt["sig_a"]
-mu_sn, sig_sn = ckpt["mu_sn"], ckpt["sig_sn"]
+# Обрезаем префикс и адаптируем ключи
+state_dict = checkpoint['net']
+state_dict = fix_state_dict_keys(state_dict)
+
+# Создаем модель и загружаем в нее исправленные веса
+model = DynNet()
+model.load_state_dict(state_dict)
+
+mu_s,  sig_s  = checkpoint["mu_s"],  checkpoint["sig_s"]
+mu_a,  sig_a  = checkpoint["mu_a"],  checkpoint["sig_a"]
+mu_sn, sig_sn = checkpoint["mu_sn"], checkpoint["sig_sn"]
 def norm(x, m, s):  return (x-m)/s
 def denorm(x, m, s):return x*s+m
 

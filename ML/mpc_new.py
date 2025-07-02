@@ -92,7 +92,7 @@ def mpc_control(sn):
 
 DRIFT, RECOVERY, IDLE = range(3)
 state, laps = DRIFT, 0
-prev_yaw = 0.0
+PREV_YAW = 0.0
 
 with serial.Serial(PORT, BAUD, timeout=0.03) as ser:
     time.sleep(2)
@@ -104,11 +104,11 @@ with serial.Serial(PORT, BAUD, timeout=0.03) as ser:
         _, ay_w = 0.0, ay
         state_now = np.array([yawRate, ay_w, 0.0, 0.0, 0.0, 0.0])
 
-        curr_yaw = prev_yaw + yawRate * 0.02
-        if prev_yaw < 0 <= curr_yaw:
+        curr_yaw = PREV_YAW + yawRate * 0.02
+        if PREV_YAW < 0 <= curr_yaw:
             laps += 1
             print(f"Lap {laps}\n")
-        prev_yaw = curr_yaw
+        PREV_YAW = curr_yaw
 
         if state == DRIFT:
             if laps >= TARGET_LAPS:
@@ -117,13 +117,13 @@ with serial.Serial(PORT, BAUD, timeout=0.03) as ser:
             err = YAW_SP - yawRate
             steer_cmd = int(np.clip(STEER_C + PID_KP * err * STEER_SP,
                                     STEER_MIN, STEER_MAX))
-            gas_cmd = GAS_DURING_DRIFT
+            GAS_CMD = GAS_DURING_DRIFT
         elif state == RECOVERY:
-            steer_cmd, gas_cmd = mpc_control(state_now)
+            steer_cmd, GAS_CMD = mpc_control(state_now)
             if abs(yawRate) < 30 and abs(ay_w) < 1:
                 state = IDLE
                 print("→ IDLE\n")
         else:
-            steer_cmd, gas_cmd = STEER_C, GAS_MIN
+            steer_cmd, GAS_CMD = STEER_C, GAS_MIN
 
-        ser.write(f"{steer_cmd},{gas_cmd}\n".encode())
+        ser.write(f"{steer_cmd},{GAS_CMD}\n".encode())

@@ -119,7 +119,8 @@ unsigned long startTime;
 
 bool readyToDrive = false;
 unsigned long readyStart = 0;
-static uint16_t lastGoodServo = 3000;
+uint16_t lastGoodServo = 3000;
+uint16_t lastGoodMotor = 700;
 
 void setup() {
   pinMode(2,INPUT);
@@ -131,9 +132,11 @@ void setup() {
 
   initTimer(); 
   Serial.begin(115200);
+  Serial.setTimeout(10);
   setOcr1A(700);
   setOcr1B(3000); 
-  readyStart = millis();
+  delay(1000);
+
 
   //Initialize IMU
   Wire.begin();
@@ -147,76 +150,88 @@ void setup() {
 
 
 void loop() {
+  
   static String serialBuffer = "";
   static bool gotSerialSteer = false;
   static unsigned long lastSerialTime = 0;
 
   // ---------- read serial ----------
+  // String s = Serial.readString();
+  // int value = s.toInt();
+  int valueServo = Serial.parseInt();  // считывает до первой запятой
+  int valueMotor = Serial.parseInt(); 
+  
+  if (valueServo > 100 && valueMotor > 100) {
+    lastGoodServo = valueServo;
+    lastGoodMotor = valueMotor;
+    
+  }
 
-  String s = Serial.readString();
-  int value = s.toInt();
-  lastGoodServo = value;
+  
   gotSerialSteer = true;
   lastSerialTime = millis();
+  
 
 
-  // ===== СТАНДАРТНАЯ ИНИЦИАЛИЗАЦИЯ =====
-  if (!readyToDrive) {
-    if (millis() - readyStart > 1000) {
-      readyToDrive = true;
-    } else {
-      return;
-    }
-  }
+  // // ===== СТАНДАРТНАЯ ИНИЦИАЛИЗАЦИЯ =====
+  // if (!readyToDrive) {
+  //   if (millis() - readyStart > 1000) {
+  //     readyToDrive = true;
+  //   } else {
+  //     return;
+  //   }
+  // }
 
   // ===== ЧТЕНИЕ PWM =====
   unsigned long pwmValueSOS   = pulseIn(2, HIGH);
-  unsigned long pwmValueServo = pulseIn(3, HIGH);
-  unsigned long pwmValueMotor = pulseIn(4, HIGH);
-  unsigned long pwmValueAuto  = pulseIn(5, HIGH);
+  //unsigned long pwmValueServo = pulseIn(3, HIGH);
+  //unsigned long pwmValueMotor = pulseIn(4, HIGH);
+  //unsigned long pwmValueAuto  = pulseIn(5, HIGH);
 
-  // // ===== ЕСЛИ НЕТ СЕРИАЛА >100 мс — ИСПОЛЬЗУЕМ RC =====
-  // if ((millis() - lastSerialTime) > 100) {
-  //   gotSerialSteer = false;
+
+
+  
+  // if (pwmValueMotor > 0 && pwmValueServo > 0) {
+  //   lastGoodMotor = pwmValueMotor * 2;
+  //   lastGoodServo = pwmValueServo * 2;
   // }
-
-
 
   // ===== ПОДАЕМ УПРАВЛЕНИЕ НА МОТОР И РУЛЬ =====
   if (pwmValueSOS >= 1459) {
     setOcr1A(700);  // тормоз
+    
   } else {
-    setOcr1B(lastGoodServo);            
-    setOcr1A(pwmValueMotor * 2);    
+    setOcr1B(lastGoodServo);    
+    setOcr1A(lastGoodMotor);    
   }
 
   // ===== processing IMU =====
-  unsigned long currentMillis = millis();
 
   if (!readSample()) return;
-
+  unsigned long currentMillis = millis();
   if (currentMillis - lastPrintMillis > INTERVAL_MS_PRINT) {
     angle accAngles = calculateAccelerometerAngles();
     float accPitch = degrees(accAngles.x);
     float accRoll  = degrees(accAngles.y);
 
     // ===== ОТПРАВКА В SERIAL ДЛЯ RASPBERRY =====
-    Serial.print(currentMillis); Serial.print(",");
+    Serial.print(millis()); Serial.print(",");
     Serial.print(filteredAccelX, 4); Serial.print(",");
     Serial.print(filteredAccelY, 4); Serial.print(",");
     Serial.print(normalized.gyroscope.z, 4); Serial.print(",");
-    Serial.print(lastGoodServo); 
+    Serial.print(lastGoodServo); Serial.print(",");
+    Serial.print(lastGoodMotor); 
     Serial.println();
 
     lastPrintMillis = currentMillis;
   }
 
   // ===== АДАПТИВНЫЙ ФИЛЬТР =====
-  if (isHardDrift(normalized.gyroscope.z, normalized.accelerometer.y)) {
-    updateAlpha(0.99); // упор на гироскоп
-  } else {
-    updateAlpha(0.9);  // баланс с акселерометром
-  }
+  // if (isHardDrift(normalized.gyroscope.z, normalized.accelerometer.y)) {
+  //   updateAlpha(0.99); // упор на гироскоп
+  // } else {
+  //   updateAlpha(0.9);  // баланс с акселерометром
+  // }
 }
 
 

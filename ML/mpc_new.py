@@ -134,8 +134,12 @@ with serial.Serial(PORT, BAUD, timeout=0.03) as ser:
 
         # Lap counter
         yaw_integrated = prev_yaw + yaw_rate * 0.02
-        if prev_yaw < 0 <= yaw_integrated:
+        dt = 0.02  # секунды между измерениями
+        angle_accum += yaw_rate * dt  # интегрируем угол
+
+        if prev_yaw < 0 <= yaw_integrated or angle_accum >= 360.0:
             laps += 1
+            angle_accum = angle_accum % 360.0
             print(f"Lap {laps}")
         prev_yaw = yaw_integrated
 

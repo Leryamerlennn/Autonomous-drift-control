@@ -1,129 +1,162 @@
+# ML/mpc_new.py
+"""
+Real-time drift-&-recovery controller.
+Loads dynamics NN (dyn_v3.pt) and drives the RC car via serial.
+"""
+
 import time
+from pathlib import Path
+from typing import Tuple
+
 import numpy as np
 import torch
 import serial
 
 
+# ────────────────────────────── 1. Neural net ──────────────────────────────
 class DynNet(torch.nn.Module):
-    def __init__(self):
+    """6-D state + 2-D action → 4-D next-state delta."""
+    def __init__(self) -> None:
         super().__init__()
-        self.fc1 = torch.nn.Linear(6, 128)
-        self.relu1 = torch.nn.ReLU()
-        self.fc2 = torch.nn.Linear(128, 128)
-        self.relu2 = torch.nn.ReLU()
-        self.fc3 = torch.nn.Linear(128, 4)
+        self.net = torch.nn.Sequential(
+            torch.nn.Linear(6, 128), torch.nn.ReLU(),
+            torch.nn.Linear(128, 128), torch.nn.ReLU(),
+            torch.nn.Linear(128,   4)
+        )
 
-    def forward(self, x):
-        x = self.fc1(x)
-        x = self.relu1(x)
-        x = self.fc2(x)
-        x = self.relu2(x)
-        x = self.fc3(x)
-        return x
+    def forward(self, x: torch.Tensor) -> torch.Tensor:  # type: ignore[override]
+        return self.net(x)
 
 
-def fix_state_dict_keys(sd):
-    fixed_state_dict = {}
-    for k, v in sd.items():
+def _fix_state_dict_keys(state_dict: dict) -> dict:
+    """Переименовываем слои net.* → fc*.* чтобы совпадало с DynNet()."""
+    mapping = {"net.0.": "net.0.", "net.2.": "net.2.", "net.4.": "net.4."}
+    fixed = {}
+    for k, v in state_dict.items():
         if k.startswith("net.0."):
-            new_key = k.replace("net.0.", "fc1.")
+            fixed[k.replace("net.0.", "net.0.fc1.")] = v
         elif k.startswith("net.2."):
-            new_key = k.replace("net.2.", "fc2.")
+            fixed[k.replace("net.2.", "net.2.fc2.")] = v
         elif k.startswith("net.4."):
-            new_key = k.replace("net.4.", "fc3.")
+            fixed[k.replace("net.4.", "net.4.fc3.")] = v
         else:
-            new_key = k
-        fixed_state_dict[new_key] = v
-    return fixed_state_dict
+            fixed[k] = v
+    return fixed
 
 
-PORT = "COM7"
-BAUD = 115200
-TARGET_LAPS = 2
-YAW_SP = 280.0  # °/s in drift
-PID_KP = 0.004
+def load_model(pt_path: Path) -> Tuple[DynNet, dict]:
+    """Загружает модель + чек-пойнт, приводит ключи, ставит eval()."""
+    ckpt = torch.load(pt_path, map_location="cpu", weights_only=False)
+    model = DynNet()
+    model.load_state_dict(ckpt["net"])
+    model.eval()
+    return model, ckpt
+
+
+# ────────────────────────────── 2. Константы ───────────────────────────────
+PORT             = "COM7"
+BAUD             = 115200
+TARGET_LAPS      = 2
+YAW_SP           = 280.0         # °/s во время дрифта
+PID_KP           = 0.004
 STEER_MIN, STEER_MAX = 1968, 4004
-GAS_MIN, GAS_MAX = 1968, 4004
+GAS_MIN,   GAS_MAX   = 1968, 4004
 GAS_DURING_DRIFT = 3800
-H, K, SIG = 12, 150, 0.30
-
-checkpoint = torch.load('ML/dyn_v3.pt', map_location='cpu', weights_only=False)
-state_dict = checkpoint['net']
-state_dict = fix_state_dict_keys(state_dict)
-model = DynNet()
-model.load_state_dict(state_dict)
-
-mu_s, sig_s = checkpoint["mu_s"], checkpoint["sig_s"]
-mu_a, sig_a = checkpoint["mu_a"], checkpoint["sig_a"]
-mu_sn, sig_sn = checkpoint["mu_sn"], checkpoint["sig_sn"]
-
-
-def norm(x, m, s):
-    return (x - m) / s
-
-
-def denorm(x, m, s):
-    return x * s + m
-
+# MPC
+HORIZON, N_SAMPLES, SIGMA = 12, 150, 0.30
 
 STEER_C = (STEER_MIN + STEER_MAX) / 2
 STEER_SP = (STEER_MAX - STEER_MIN) / 2
-GAS_C = (GAS_MIN + GAS_MAX) / 2
-GAS_SP = (GAS_MAX - GAS_MIN) / 2
+GAS_C   = (GAS_MIN   + GAS_MAX)   / 2
+GAS_SP  = (GAS_MAX   - GAS_MIN)   / 2
+
+# ────────────────────────────── 3. Загрузка модели ─────────────────────────
+MODEL_PATH = Path(__file__).with_name("dyn_v3.pt")
+MODEL, CKPT = load_model(MODEL_PATH)
+
+def _ckpt_val(prefer_a: str, prefer_b: str):
+    """Берём значение из чек-пойнта по первому подходящему ключу."""
+    if prefer_a in CKPT:
+        return CKPT[prefer_a]
+    if prefer_b in CKPT:
+        return CKPT[prefer_b]
+    raise KeyError(f"{prefer_a}/{prefer_b} not found in checkpoint")
+
+MU_S,  SIG_S  = _ckpt_val("mu_s",  "mu_X"),  _ckpt_val("sig_s",  "sig_X")
+MU_A,  SIG_A  = _ckpt_val("mu_a",  "mu_Y"),  _ckpt_val("sig_a",  "sig_Y")
+MU_SN, SIG_SN = _ckpt_val("mu_sn", "mu_Y"),  _ckpt_val("sig_sn", "sig_Y")
 
 
-def mpc_control(sn):
-    s0 = torch.tensor(norm(sn, mu_s, sig_s), dtype=torch.float32)
-    best, best_cost = (0, 0), 1e9
-    for _ in range(K):
-        a_seq = np.random.normal(0, SIG, size=(H, 2))
+# ────────────────────────── 4. Нормализация / MPC ──────────────────────────
+def _norm(x: np.ndarray, mu: np.ndarray, sig: np.ndarray) -> np.ndarray:
+    return (x - mu) / sig
+
+
+def _denorm(x: torch.Tensor, mu: np.ndarray, sig: np.ndarray) -> torch.Tensor:
+    return x * torch.from_numpy(sig) + torch.from_numpy(mu)
+
+
+def mpc_control(state_now: np.ndarray) -> Tuple[int, int]:
+    """Возвращает (steer_pwm, gas_pwm) для текущего состояния."""
+    s0 = torch.tensor(_norm(state_now, MU_S, SIG_S), dtype=torch.float32)
+
+    best_cost, best_action = float("inf"), np.zeros(2)
+    for _ in range(N_SAMPLES):
+        a_seq = np.random.normal(0, SIGMA, size=(HORIZON, 2))
         cost, s = 0.0, s0.clone()
         for a in a_seq:
-            a_n = torch.tensor(norm(a, mu_a, sig_a), dtype=torch.float32)
-            s = model(torch.cat([s, a_n]))
-            yaw, a_y, beta, _ = denorm(s, mu_sn, sig_sn)
-            cost += yaw * yaw + 0.5 * a_y * a_y + 0.2 * beta * beta
+            a_n = torch.tensor(_norm(a, MU_A, SIG_A), dtype=torch.float32)
+            s   = MODEL(torch.cat([s, a_n]))
+            yaw, ay, beta, _ = _denorm(s, MU_SN, SIG_SN)
+            cost += yaw**2 + 0.5 * ay**2 + 0.2 * beta**2
         if cost < best_cost:
-            best_cost, best = a_seq[0]
-    spwm = int(np.clip(best[0] * STEER_SP + STEER_C, STEER_MIN, STEER_MAX))
-    gpwm = int(np.clip(best[1] * GAS_SP + GAS_C, GAS_MIN, GAS_MAX))
-    return spwm, gpwm
+            best_cost, best_action = cost, a_seq[0]
+
+    steer_pwm = int(np.clip(best_action[0] * STEER_SP + STEER_C, STEER_MIN, STEER_MAX))
+    gas_pwm   = int(np.clip(best_action[1] * GAS_SP   + GAS_C,   GAS_MIN,   GAS_MAX))
+    return steer_pwm, gas_pwm
 
 
+# ────────────────────────────── 5. Главный цикл ────────────────────────────
 DRIFT, RECOVERY, IDLE = range(3)
-state, laps = DRIFT, 0
-PREV_YAW = 0.0
+fsm_state, laps, prev_yaw = DRIFT, 0, 0.0
 
 with serial.Serial(PORT, BAUD, timeout=0.03) as ser:
-    time.sleep(2)
+    time.sleep(2)                                  # Arduino reset
     while True:
-        raw = ser.readline().decode(errors="ignore").strip()
-        if not raw:
+        line = ser.readline().decode(errors="ignore").strip()
+        if not line:
             continue
-        t, ax, ay, yawRate, steer_pwm, gas_pwm = map(float, raw.split(",")[:6])
-        _, ay_w = 0.0, ay
-        state_now = np.array([yawRate, ay_w, 0.0, 0.0, 0.0, 0.0])
 
-        curr_yaw = PREV_YAW + yawRate * 0.02
-        if PREV_YAW < 0 <= curr_yaw:
+        t, ax, ay, yaw_rate, _, _ = map(float, line.split(",")[:6])
+        ay_world = ay                                   # если прошивка шлёт world-ay
+        state_now = np.array([yaw_rate, ay_world, 0.0, 0.0, 0.0, 0.0])
+
+        # Lap counter
+        yaw_integrated = prev_yaw + yaw_rate * 0.02
+        if prev_yaw < 0 <= yaw_integrated:
             laps += 1
-            print(f"Lap {laps}\n")
-        PREV_YAW = curr_yaw
+            print(f"Lap {laps}")
+        prev_yaw = yaw_integrated
 
-        if state == DRIFT:
+        # FSM
+        if fsm_state == DRIFT:
             if laps >= TARGET_LAPS:
-                state = RECOVERY
-                print("→ RECOVERY\n")
-            err = YAW_SP - yawRate
+                fsm_state = RECOVERY
+                print("→ RECOVERY")
+
+            err = YAW_SP - yaw_rate
             steer_cmd = int(np.clip(STEER_C + PID_KP * err * STEER_SP,
                                     STEER_MIN, STEER_MAX))
-            GAS_CMD = GAS_DURING_DRIFT
-        elif state == RECOVERY:
-            steer_cmd, GAS_CMD = mpc_control(state_now)
-            if abs(yawRate) < 30 and abs(ay_w) < 1:
-                state = IDLE
-                print("→ IDLE\n")
-        else:
-            steer_cmd, GAS_CMD = STEER_C, GAS_MIN
+            gas_cmd = GAS_DURING_DRIFT
 
-        ser.write(f"{steer_cmd},{GAS_CMD}\n".encode())
+        elif fsm_state == RECOVERY:
+            steer_cmd, gas_cmd = mpc_control(state_now)
+            if abs(yaw_rate) < 30 and abs(ay_world) < 1:
+                fsm_state = IDLE
+                print("→ IDLE")
+
+        else:  # IDLE
+            steer_cmd, gas_cmd = STEER_C, GAS_MIN
+
+        ser.write(f"{steer_cmd},{gas_cmd}\n".encode())

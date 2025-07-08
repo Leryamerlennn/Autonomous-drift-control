@@ -28,22 +28,6 @@ class DynNet(torch.nn.Module):
         return self.net(x)
 
 
-def _fix_state_dict_keys(state_dict: dict) -> dict:
-    """Переименовываем слои net.* → fc*.* чтобы совпадало с DynNet()."""
-    mapping = {"net.0.": "net.0.", "net.2.": "net.2.", "net.4.": "net.4."}
-    fixed = {}
-    for k, v in state_dict.items():
-        if k.startswith("net.0."):
-            fixed[k.replace("net.0.", "net.0.fc1.")] = v
-        elif k.startswith("net.2."):
-            fixed[k.replace("net.2.", "net.2.fc2.")] = v
-        elif k.startswith("net.4."):
-            fixed[k.replace("net.4.", "net.4.fc3.")] = v
-        else:
-            fixed[k] = v
-    return fixed
-
-
 def load_model(pt_path: Path) -> Tuple[DynNet, dict]:
     """Загружает модель + чек-пойнт, приводит ключи, ставит eval()."""
     ckpt = torch.load(pt_path, map_location="cpu", weights_only=False)
@@ -106,7 +90,7 @@ def mpc_control(state_now: np.ndarray) -> Tuple[int, int]:
         cost, s = 0.0, s0.clone()
         for a in a_seq:
             a_n = torch.tensor(_norm(a, MU_A, SIG_A), dtype=torch.float32)
-            s   = MODEL(torch.cat([s, a_n]))
+            s   = MODEL(s)
             yaw, ay, beta, _ = _denorm(s, MU_SN, SIG_SN)
             cost += yaw**2 + 0.5 * ay**2 + 0.2 * beta**2
         if cost < best_cost:

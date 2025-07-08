@@ -56,14 +56,15 @@ def load_model(pt_path: Path) -> Tuple[DynNet, dict]:
 # ────────────────────────────── 2. Константы ───────────────────────────────
 PORT             = "/dev/ttyACM0"
 BAUD             = 115200
-TARGET_LAPS      = 2
+TARGET_LAPS      = 1
+
 YAW_SP           = 280.0         # °/s во время дрифта
 PID_KP           = 0.004
 STEER_MIN, STEER_MAX = 1968, 4004
-GAS_MIN,   GAS_MAX   = 1968, 4004
+GAS_MIN,   GAS_MAX   = 3880, 4004
 GAS_DURING_DRIFT = 4000
 # MPC
-HORIZON, N_SAMPLES, SIGMA = 12, 150, 0.30
+HORIZON, N_SAMPLES, SIGMA = 12, 10, 0.30
 
 STEER_C = (STEER_MIN + STEER_MAX) / 2
 STEER_SP = (STEER_MAX - STEER_MIN) / 2
@@ -185,9 +186,9 @@ with serial.Serial(PORT, BAUD, timeout=0.03) as ser:
             yaw_integrated = prev_yaw + yaw_rate * dt
             angle_accum += yaw_rate * dt  # интегрируем угол
 
-            if prev_yaw < 0 <= yaw_integrated or angle_accum >= 360.0:
+            if angle_accum >= 360.0:
                 laps += 1
-                angle_accum = angle_accum % 360.0
+                angle_accum = angle_accum - 360.0
                 print(f"Lap {laps}")
             prev_yaw = yaw_integrated
 
@@ -212,7 +213,7 @@ with serial.Serial(PORT, BAUD, timeout=0.03) as ser:
                 steer_cmd, gas_cmd = STEER_C, GAS_MIN
 
             ser.write(f"{steer_cmd},{gas_cmd}\n".encode())
-            print(f"{t},{steer_cmd},{gas_cmd},{yaw_integrated}")
+            print(f"{t},{steer_cmd},{gas_cmd},{angle_accum}")
             t0 = t
         except:
             pass

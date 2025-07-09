@@ -50,7 +50,7 @@ TARGET_LAPS      = 2
 YAW_SP           = 280.0         # °/s во время дрифта
 PID_KP           = 0.004
 STEER_MIN, STEER_MAX = 1968, 4004
-GAS_MIN,   GAS_MAX   = 1968, 4004
+GAS_MIN,   GAS_MAX   = 3890, 4004
 GAS_DURING_DRIFT = 4000
 # MPC
 HORIZON, N_SAMPLES, SIGMA = 12, 150, 0.30
@@ -90,9 +90,10 @@ def _denorm(x: torch.Tensor, mu: np.ndarray, sig: np.ndarray) -> torch.Tensor:
 
 def mpc_control(state_now: np.ndarray) -> Tuple[int, int]:
     """Возвращает (steer_pwm, gas_pwm) для текущего состояния."""
+   
     with torch.no_grad():
         s0 = torch.tensor(_norm(state_now, MU_S, SIG_S), dtype=torch.float32)
-
+        
         # First step is predicted without action as in the original logic
         s = MODEL(s0)
         yaw, ay, beta, _ = _denorm(s, MU_SN, SIG_SN)
@@ -101,7 +102,7 @@ def mpc_control(state_now: np.ndarray) -> Tuple[int, int]:
         # Sample all action sequences at once
         a_seq = torch.normal(0.0, SIGMA, size=(N_SAMPLES, HORIZON, 2))
         a_norm = (a_seq - torch.from_numpy(MU_A)) / torch.from_numpy(SIG_A)
-
+        
         # Propagate all trajectories in parallel
         s_batch = s.repeat(N_SAMPLES, 1)
         costs = torch.full((N_SAMPLES,), base_cost)
@@ -109,9 +110,12 @@ def mpc_control(state_now: np.ndarray) -> Tuple[int, int]:
         for t in range(1, HORIZON):
             inp = torch.cat([s_batch, a_norm[:, t, :]], dim=1)
             s_batch = MODEL(inp)
-            yaw, ay, beta, _ = _denorm(s_batch, MU_SN, SIG_SN)
+            # print(s_batch)
+            # print("In 1")
+            # print(_denorm(s_batch, MU_SN, SIG_SN))
+            yaw, ay, beta, _ = torch.transpose(_denorm(s_batch, MU_SN, SIG_SN), 0, 1)
             costs += yaw ** 2 + 0.5 * ay ** 2 + 0.2 * beta ** 2
-
+            # print("Out 1")
         best_idx = int(torch.argmin(costs))
         best_action = a_seq[best_idx, 0]
 
@@ -171,7 +175,7 @@ with serial.Serial(PORT, BAUD, timeout=0.03) as ser:
             yaw_integrated = prev_yaw + yaw_rate * dt
             angle_accum += yaw_rate * dt  # интегрируем угол
 
-            if prev_yaw < 0 <= yaw_integrated or angle_accum >= 360.0:
+            if angle_accum >= 360.0:
                 laps += 1
                 angle_accum = angle_accum % 360.0
                 print(f"Lap {laps}")

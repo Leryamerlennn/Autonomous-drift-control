@@ -11,21 +11,10 @@ from typing import Tuple
 import numpy as np
 import torch
 import serial
+from new_train import DynNet
 
 
 # ────────────────────────────── 1. Neural net ──────────────────────────────
-class DynNet(torch.nn.Module):
-    """6-D state + 2-D action → 4-D next-state delta."""
-    def __init__(self, hidden_dim: int = 32) -> None:
-        super().__init__()
-        self.net = torch.nn.Sequential(
-            torch.nn.Linear(6, hidden_dim), torch.nn.ReLU(),
-            torch.nn.Linear(hidden_dim, hidden_dim), torch.nn.ReLU(),
-            torch.nn.Linear(hidden_dim,   4)
-        )
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:  # type: ignore[override]
-        return self.net(x)
 
 
 def _fix_state_dict_keys(state_dict: dict) -> dict:

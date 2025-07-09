@@ -15,7 +15,7 @@ from torch.utils.data import DataLoader, TensorDataset
 # ---------------------------------------------------------------------------
 # Configuration (adjust `CSV_GLOB` to either raw CSVs or a `.npz` dataset)
 # ---------------------------------------------------------------------------
-CSV_GLOB   = "../new_data/circle/*.csv"   # e.g. "../new_data/circle/*.csv" or an NPZ
+CSV_GLOB   = "../../new_data/circle/*.csv"   # e.g. "../new_data/circle/*.csv" or an NPZ
 EPOCHS     = 300
 BATCH_SIZE = 2048
 OUT_MODEL  = "dyn_v3.pt"
@@ -85,15 +85,15 @@ def load_dataset(path: str):
 # Neural network
 # ---------------------------------------------------------------------------
 class DynNet(nn.Module):
-    def __init__(self):
+    def __init__(self, hidden_dim: int = 32) -> None:
         super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(6, 128), nn.ReLU(),
-            nn.Linear(128, 128), nn.ReLU(),
-            nn.Linear(128, 4)
+        self.net = torch.nn.Sequential(
+            torch.nn.Linear(6, hidden_dim), torch.nn.ReLU(),
+            torch.nn.Linear(hidden_dim, hidden_dim), torch.nn.ReLU(),
+            torch.nn.Linear(hidden_dim, 4)
         )
 
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:  # type: ignore[override]
         return self.net(x)
 
 

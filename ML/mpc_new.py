@@ -29,7 +29,7 @@ class DynNet(torch.nn.Module):
 
 
 def _fix_state_dict_keys(state_dict: dict) -> dict:
-    """Переименовываем слои net.* → fc*.* чтобы совпадало с DynNet()."""
+    """Rename layers net.* into fc*.* to match with DynNet()."""
     mapping = {"net.0.": "net.0.", "net.2.": "net.2.", "net.4.": "net.4."}
     fixed = {}
     for k, v in state_dict.items():
@@ -45,7 +45,7 @@ def _fix_state_dict_keys(state_dict: dict) -> dict:
 
 
 def load_model(pt_path: Path) -> Tuple[DynNet, dict]:
-    """Загружает модель + чек-пойнт, приводит ключи, ставит eval()."""
+    """Loads model + checkpoint, provides the keys, sets eval()."""
     ckpt = torch.load(pt_path, map_location="cpu", weights_only=False)
     model = DynNet()
     model.load_state_dict(ckpt["net"])
@@ -53,17 +53,16 @@ def load_model(pt_path: Path) -> Tuple[DynNet, dict]:
     return model, ckpt
 
 
-# ────────────────────────────── 2. Константы ───────────────────────────────
+# ────────────────────────────── 2. Constants ───────────────────────────────
 PORT             = "/dev/ttyACM0"
 BAUD             = 115200
 TARGET_LAPS      = 1
-
-YAW_SP           = 280.0         # °/s во время дрифта
+YAW_SP           = 280.0         # °/s while drift
 PID_KP           = 0.004
 STEER_MIN, STEER_MAX = 1968, 4004
 GAS_MIN,   GAS_MAX   = 3880, 4004
 GAS_DURING_DRIFT = 4000
-# MPC
+# MPC HYPERPARAMETERS
 HORIZON, N_SAMPLES, SIGMA = 12, 10, 0.30
 
 STEER_C = (STEER_MIN + STEER_MAX) / 2
@@ -71,12 +70,12 @@ STEER_SP = (STEER_MAX - STEER_MIN) / 2
 GAS_C   = (GAS_MIN   + GAS_MAX)   / 2
 GAS_SP  = (GAS_MAX   - GAS_MIN)   / 2
 
-# ────────────────────────────── 3. Загрузка модели ─────────────────────────
+# ────────────────────────────── 3. Model downloading ─────────────────────────
 MODEL_PATH = Path(__file__).with_name("dyn_v3.pt")
 MODEL, CKPT = load_model(MODEL_PATH)
 
 def _ckpt_val(prefer_a: str, prefer_b: str):
-    """Берём значение из чек-пойнта по первому подходящему ключу."""
+    """Takes value from checkpoint by first sutable key."""
     if prefer_a in CKPT:
         return CKPT[prefer_a]
     if prefer_b in CKPT:
@@ -90,7 +89,7 @@ MU_SN, SIG_SN = _ckpt_val("mu_sn", "mu_Y"),  _ckpt_val("sig_sn", "sig_Y")
 MU_A = MU_A[:2]
 SIG_A = SIG_A[:2]
 
-# ────────────────────────── 4. Нормализация / MPC ──────────────────────────
+# ────────────────────────── 4. Normalization / MPC ──────────────────────────
 def _norm(x: np.ndarray, mu: np.ndarray, sig: np.ndarray) -> np.ndarray:
     return (x - mu) / sig
 
@@ -100,7 +99,7 @@ def _denorm(x: torch.Tensor, mu: np.ndarray, sig: np.ndarray) -> torch.Tensor:
 
 
 def mpc_control(state_now: np.ndarray) -> Tuple[int, int]:
-    """Возвращает (steer_pwm, gas_pwm) для текущего состояния."""
+    """Returns (steer_pwm, gas_pwm) for current state."""
     s0 = torch.tensor(_norm(state_now, MU_S, SIG_S), dtype=torch.float32)
 
     best_cost, best_action = float("inf"), np.zeros(2)
@@ -108,57 +107,37 @@ def mpc_control(state_now: np.ndarray) -> Tuple[int, int]:
         a_seq = np.random.normal(0, SIGMA, size=(HORIZON, 2))
         cost, s = 0.0, s0.clone()
         s   = MODEL(s0)
-        # print(s)
         yaw, ay, beta, _ = _denorm(s, MU_SN, SIG_SN)
         cost += yaw**2 + 0.5 * ay**2 + 0.2 * beta**2
-        # print('Прошло 1')
-        # print(a_seq)
         for a in a_seq[1:]:
-            # print("Зашло")
-            try:
-                # print(a, MU_A)
-                a_n = torch.tensor(_norm(a, MU_A, SIG_A), dtype=torch.float32)
-            except Exception as e:
-                print(e)
-            # print("Вышло")
-            try:
-                s   = MODEL(torch.cat([s, a_n]))
-            except Exception as e:
-                print(e) 
-            # print(s)
+            a_n = torch.tensor(_norm(a, MU_A, SIG_A), dtype=torch.float32)
+            s   = MODEL(torch.cat([s, a_n]))
             yaw, ay, beta, _ = _denorm(s, MU_SN, SIG_SN)
             cost += yaw**2 + 0.5 * ay**2 + 0.2 * beta**2
-        # print('Прошло 2')
         if cost < best_cost:
             best_cost, best_action = cost, a_seq[0]
-
     steer_pwm = int(np.clip(best_action[0] * STEER_SP + STEER_C, STEER_MIN, STEER_MAX))
     gas_pwm   = int(np.clip(best_action[1] * GAS_SP   + GAS_C,   GAS_MIN,   GAS_MAX))
-    print(steer_pwm, gas_pwm)
     return steer_pwm, gas_pwm
 
 def reset_arduino(port='/dev/ttyACM0', baudrate=115200):
-    # Открываем порт
     ser = serial.Serial(port, baudrate)
-    ser.dtr = False  # Устанавливаем DTR в False
+    ser.dtr = False
     time.sleep(0.1)
-    ser.dtr = True   # Устанавливаем DTR обратно в True
-    ser.close()      # Закрываем порт
-
+    ser.dtr = True
+    ser.close()  
     print("Arduino has been reset.")
 
-# ────────────────────────────── 5. Главный цикл ────────────────────────────
+# ────────────────────────────── 5. Main part ────────────────────────────
 DRIFT, RECOVERY, IDLE = range(3)
-fsm_state, laps, prev_yaw = DRIFT, 0, 0.0
+fsm_state, laps, prev_yaw, angle_accum = DRIFT, 0, 0.0, 0.0
 
 with serial.Serial(PORT, BAUD, timeout=0.03) as ser:
-    # time.sleep(2)                                  # Arduino reset
     reset_arduino()
     time.sleep(4)
     ser.reset_input_buffer()
     ser.reset_output_buffer()
-    print(111)
-    angle_accum = 0
+    
     while True:
         try:
             lines = ser.readlines()
@@ -169,7 +148,7 @@ with serial.Serial(PORT, BAUD, timeout=0.03) as ser:
             break
         except:
             pass
-    # print(t0)
+    print("Car is ready")
     while True:
         try:
             _ = ser.readlines()
@@ -178,13 +157,13 @@ with serial.Serial(PORT, BAUD, timeout=0.03) as ser:
                 continue
 
             t, ax, ay, yaw_rate, _, _ = map(float, line.split(",")[:6])
-            ay_world = ay                                   # если прошивка шлёт world-ay
+            ay_world = ay                                   # if firmware sends world-ay
             state_now = np.array([yaw_rate, ay_world, 0.0, 0.0, 0.0, 0.0])
 
             # Lap counter
-            dt = (t - t0)/1000 # секунды между измерениями
+            dt = (t - t0)/1000 # seconds between measurements
             yaw_integrated = prev_yaw + yaw_rate * dt
-            angle_accum += yaw_rate * dt  # интегрируем угол
+            angle_accum += yaw_rate * dt  # integration of angle
 
             if angle_accum >= 360.0:
                 laps += 1
@@ -211,9 +190,7 @@ with serial.Serial(PORT, BAUD, timeout=0.03) as ser:
 
             else:  # IDLE
                 steer_cmd, gas_cmd = STEER_C, GAS_MIN
-
             ser.write(f"{steer_cmd},{gas_cmd}\n".encode())
-            print(f"{t},{steer_cmd},{gas_cmd},{angle_accum}")
             t0 = t
         except:
             pass

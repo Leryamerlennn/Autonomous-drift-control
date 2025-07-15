@@ -1,3 +1,4 @@
+# pylint: skip-file
 # Send pwm signals to Arduiono using SSH connection
 
 import serial

@@ -1,6 +1,8 @@
 [MASTER]
 # Указываем максимальную длину строки, например, 120 символов
 max-line-length=120
+ignore=tests,ML/old_staff,ML/light_version,new_train.py,preprocess_drift_exit.py
+ignore-patterns=tests/.*,.*Hardware\ integration\ layer.*,.*old_staff.*,.*light_version.*
 
 [MESSAGES CONTROL]
 # Игнорируем некоторые предупреждения

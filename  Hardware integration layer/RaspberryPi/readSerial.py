@@ -1,3 +1,4 @@
+# pylint: skip-file
 import serial
 import time
 

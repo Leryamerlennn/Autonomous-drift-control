@@ -30,8 +30,7 @@ class DynNet(torch.nn.Module):
 
 def _fix_state_dict_keys(state_dict: dict) -> dict:
     """Rename layers net.* into fc*.* to match with DynNet()."""
-    mapping = {"net.0.": "net.0.", "net.2.": "net.2.", "net.4.": "net.4."}
-    fixed = {}
+    fixed: dict = {}
     for k, v in state_dict.items():
         if k.startswith("net.0."):
             fixed[k.replace("net.0.", "net.0.fc1.")] = v
@@ -106,26 +105,26 @@ def mpc_control(state_now: np.ndarray) -> Tuple[int, int]:
     for _ in range(N_SAMPLES):
         a_seq = np.random.normal(0, SIGMA, size=(HORIZON, 2))
         cost, s = 0.0, s0.clone()
-        s   = MODEL(s0)
-        yaw, ay, beta, _ = _denorm(s, MU_SN, SIG_SN)
-        cost += yaw**2 + 0.5 * ay**2 + 0.2 * beta**2
+        s = MODEL(s0)
+        yaw, ay_val, beta, _ = _denorm(s, MU_SN, SIG_SN)
+        cost += yaw**2 + 0.5 * ay_val**2 + 0.2 * beta**2
         for a in a_seq[1:]:
             a_n = torch.tensor(_norm(a, MU_A, SIG_A), dtype=torch.float32)
-            s   = MODEL(torch.cat([s, a_n]))
-            yaw, ay, beta, _ = _denorm(s, MU_SN, SIG_SN)
-            cost += yaw**2 + 0.5 * ay**2 + 0.2 * beta**2
+            s = MODEL(torch.cat([s, a_n]))
+            yaw, ay_val, beta, _ = _denorm(s, MU_SN, SIG_SN)
+            cost += yaw**2 + 0.5 * ay_val**2 + 0.2 * beta**2
         if cost < best_cost:
             best_cost, best_action = cost, a_seq[0]
     steer_pwm = int(np.clip(best_action[0] * STEER_SP + STEER_C, STEER_MIN, STEER_MAX))
     gas_pwm   = int(np.clip(best_action[1] * GAS_SP   + GAS_C,   GAS_MIN,   GAS_MAX))
     return steer_pwm, gas_pwm
 
-def reset_arduino(port='/dev/ttyACM0', baudrate=115200):
-    ser = serial.Serial(port, baudrate)
-    ser.dtr = False
+def reset_arduino(port="/dev/ttyACM0", baudrate=115200):
+    serial_port = serial.Serial(port, baudrate)
+    serial_port.dtr = False
     time.sleep(0.1)
-    ser.dtr = True
-    ser.close()  
+    serial_port.dtr = True
+    serial_port.close()
     print("Arduino has been reset.")
 
 # ────────────────────────────── 5. Main part ────────────────────────────
@@ -137,7 +136,7 @@ with serial.Serial(PORT, BAUD, timeout=0.03) as ser:
     time.sleep(4)
     ser.reset_input_buffer()
     ser.reset_output_buffer()
-    
+
     while True:
         try:
             lines = ser.readlines()
@@ -146,7 +145,7 @@ with serial.Serial(PORT, BAUD, timeout=0.03) as ser:
                 continue
             t0, ax, ay, yaw_rate, _, _ = map(float, line.split(",")[:6])
             break
-        except:
+        except (ValueError, UnicodeDecodeError, serial.SerialException):
             pass
     print("Car is ready")
     while True:
@@ -157,8 +156,8 @@ with serial.Serial(PORT, BAUD, timeout=0.03) as ser:
                 continue
 
             t, ax, ay, yaw_rate, _, _ = map(float, line.split(",")[:6])
-            ay_world = ay                                   # if firmware sends world-ay
-            state_now = np.array([yaw_rate, ay_world, 0.0, 0.0, 0.0, 0.0])
+            ay_world = ay  # if firmware sends world-ay
+            current_state = np.array([yaw_rate, ay_world, 0.0, 0.0, 0.0, 0.0])
 
             # Lap counter
             dt = (t - t0)/1000 # seconds between measurements
@@ -180,17 +179,17 @@ with serial.Serial(PORT, BAUD, timeout=0.03) as ser:
                 err = YAW_SP - yaw_rate
                 steer_cmd = int(np.clip(STEER_C + PID_KP * err * STEER_SP,
                                         STEER_MIN, STEER_MAX))
-                gas_cmd = GAS_DURING_DRIFT
+                GAS_CMD = GAS_DURING_DRIFT
 
             elif fsm_state == RECOVERY:
-                steer_cmd, gas_cmd = mpc_control(state_now)
+                steer_cmd, GAS_CMD = mpc_control(current_state)
                 if abs(yaw_rate) < 30 and abs(ay_world) < 1:
                     fsm_state = IDLE
                     print("→ IDLE")
 
             else:  # IDLE
-                steer_cmd, gas_cmd = STEER_C, GAS_MIN
-            ser.write(f"{steer_cmd},{gas_cmd}\n".encode())
+                steer_cmd, GAS_CMD = STEER_C, GAS_MIN
+            ser.write(f"{steer_cmd},{GAS_CMD}\n".encode())
             t0 = t
-        except:
+        except (ValueError, UnicodeDecodeError, serial.SerialException):
             pass

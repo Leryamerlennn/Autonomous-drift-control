@@ -1,15 +1,18 @@
+# pylint: disable=duplicate-code
 import importlib.util
+import sys
 from pathlib import Path
 import numpy as np
 import pytest
+import serial
 
 torch = pytest.importorskip("torch")
+
+# pylint: disable=protected-access
 
 
 def load_module(path: Path):
     """Load light mpc module without running its endless loop."""
-    import serial
-    import sys
     class StopSerial:
         def __init__(self, *a, **k):
             pass
@@ -60,7 +63,9 @@ def test_norm_denorm_roundtrip():
 def test_mpc_control_basic(monkeypatch):
 
     class Dummy(torch.nn.Module):
-        def forward(self, x):
+        """Minimal network for testing."""
+        # pylint: disable=too-few-public-methods
+        def forward(self, _x):
             return torch.zeros(4)
     dummy = Dummy()
     monkeypatch.setattr(mpc, 'MODEL', dummy)
@@ -85,4 +90,3 @@ def test_mpc_control_basic(monkeypatch):
     steer, gas = mpc.mpc_control(np.zeros(6))
     assert steer == 0
     assert gas == 0
-

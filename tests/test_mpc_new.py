@@ -1,14 +1,17 @@
+# pylint: disable=duplicate-code
 import importlib.util
 from pathlib import Path
+import serial
 import numpy as np
 import pytest
 
 torch = pytest.importorskip("torch")
 
+# pylint: disable=protected-access
+
 
 def load_module(path: Path):
     """Load module without executing its main loop."""
-    import serial
     class StopSerial:
         def __init__(self, *args, **kwargs):
             pass
@@ -53,4 +56,3 @@ def test_norm_denorm_roundtrip_heavy():
     n = mpc._norm(x, mu, sig)
     d = mpc._denorm(torch.tensor(n), mu, sig)
     assert torch.allclose(d, torch.tensor(x))
-

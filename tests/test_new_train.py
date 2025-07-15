@@ -1,3 +1,4 @@
+# pylint: disable=duplicate-code
 import sys
 from pathlib import Path
 import numpy as np
@@ -7,7 +8,7 @@ import pytest
 torch = pytest.importorskip("torch")
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'ML'))
-import new_train as nt
+import new_train as nt  # pylint: disable=wrong-import-position
 
 def test_load_csvs(tmp_path):
     df1 = pd.DataFrame({'t_sec':[0], 'x_world':[0], 'y_world':[0], 'yaw_rad':[0]})
@@ -38,19 +39,19 @@ def test_build_matrices():
         'steer':[nt.STEER_C, nt.STEER_C, nt.STEER_C],
         'gas':[nt.GAS_C, nt.GAS_C, nt.GAS_C]
     })
-    X, dS = nt.build_matrices(df)
-    assert X.shape == (2,6)
-    assert dS.shape == (2,4)
+    x_mat, delta_s = nt.build_matrices(df)
+    assert x_mat.shape == (2, 6)
+    assert delta_s.shape == (2, 4)
 
 def test_load_dataset_npz(tmp_path):
     npz_path = tmp_path / 'data.npz'
     np.savez(npz_path, X=np.zeros((2,6)), Y=np.ones((2,4)),
              mu_X=np.zeros(6), sig_X=np.ones(6),
              mu_Y=np.zeros(4), sig_Y=np.ones(4))
-    X, Y, muX, sigX, muY, sigY = nt.load_dataset(str(npz_path))
-    assert X.shape == (2,6)
-    assert Y.shape == (2,4)
-    assert np.allclose(muX, np.zeros(6))
+    x_mat, y_mat, mu_x, _sig_x, _mu_y, _sig_y = nt.load_dataset(str(npz_path))
+    assert x_mat.shape == (2, 6)
+    assert y_mat.shape == (2, 4)
+    assert np.allclose(mu_x, np.zeros(6))
 
 def test_dynnet_forward():
     net = nt.DynNet()

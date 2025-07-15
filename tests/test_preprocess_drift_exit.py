@@ -1,10 +1,11 @@
 import sys
 from pathlib import Path
-import numpy as np
 import pandas as pd
 
+# pylint: disable=duplicate-code
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'ML'))
-import preprocess_drift_exit as pde
+import preprocess_drift_exit as pde  # pylint: disable=wrong-import-position
 
 
 def make_df():
@@ -30,9 +31,9 @@ def test_add_speed_beta():
 def test_build_matrices():
     df = make_df()
     out = pde.add_speed_beta(df)
-    X,dS = pde.build_matrices(out)
-    assert X.shape[1] == 6
-    assert dS.shape[1] == 4
+    x_mat, delta_s = pde.build_matrices(out)
+    assert x_mat.shape[1] == 6
+    assert delta_s.shape[1] == 4
 
 
 def test_extract_segments():

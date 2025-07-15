@@ -3,33 +3,33 @@ name: CI/CD Pipeline
 on:
   push:
     branches:
-      - main  # Запускать при push в ветку main
+      - master
   pull_request:
     branches:
-      - main  # Запускать при pull request в ветку main
+      - master
 
 jobs:
   lint:
-    runs-on: ubuntu-latest  # Использовать последнюю версию Ubuntu
+    runs-on: ubuntu-latest
 
     steps:
     - name: Checkout Code
-      uses: actions/checkout@v2  # Клонируем репозиторий
+      uses: actions/checkout@v2
 
     - name: Set up Python
       uses: actions/setup-python@v2
       with:
-        python-version: '3.11'  # Установим Python версии 3.11
+        python-version: '3.11'
 
     - name: Install Dependencies
       run: |
-        pip install -r requirements.txt  # Устанавливаем зависимости из requirements.txt
+        pip install -r requirements.txt
+        pip install pandas
+
+    - name: Run Tests
+      run: |
+        pytest -q
 
     - name: Run Pylint
       run: |
-        pylint **/*.py  # Запуск линтера на всех файлах Python в проекте
-
-    - name: Run Ml model Tests
-      run: |
-        pip install pytest
-        pytest test_model.py
+        pylint **/*.py

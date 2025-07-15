@@ -1,4 +1,5 @@
 import pytest
+torch = pytest.importorskip("torch")
 import torch
 
 

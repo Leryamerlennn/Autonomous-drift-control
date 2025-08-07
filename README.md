@@ -66,3 +66,7 @@ Follow the step-by-step guide in `Documentation/` before running the main contro
 - [Ilyas Galiev](https://github.com/Ily17as)
 - [Nikolay Rostov](https://github.com/W1nchie)
 - [Andrew Krasnov](https://github.com/krasand)
+
+## Current result 
+
+You can watch how our car drifts in this [video](https://drive.google.com/file/d/154NlQNKvj2FSwLbCCuWykqF98T6803IX/view?usp=sharing)
